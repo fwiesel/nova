@@ -216,6 +216,28 @@ class _TestFlavorPermissionRuleObjectDB(_TestFlavorPermissionRuleObject):
             self.context, db_rule.id)
         self.assertEqual(new_effect, updated_rule.effect)
 
+    def test_save_effect_preserves_scope_and_flavor(self):
+        db_rule = self._create_db_rule()
+        rule = objects.FlavorPermissionRule.get_by_id(self.context, db_rule.id)
+        expected_target = (rule.domain_id, rule.project_id, rule.flavor_id,
+                           rule.scope)
+        self.assertEqual(fields.FlavorPermissionRuleScope.PROJECT, rule.scope)
+        self.assertIsNotNone(rule.flavor_id)
+
+        rule.effect = fields.FlavorPermissionRuleEffect.DENY
+        self.assertEqual({'effect': fields.FlavorPermissionRuleEffect.DENY},
+                         rule.obj_get_changes())
+        rule.save()
+
+        updated_rule = objects.FlavorPermissionRule.get_by_id(
+            self.context, db_rule.id)
+        self.assertEqual(fields.FlavorPermissionRuleEffect.DENY,
+                         updated_rule.effect)
+        self.assertEqual(
+            expected_target,
+            (updated_rule.domain_id, updated_rule.project_id,
+             updated_rule.flavor_id, updated_rule.scope))
+
     def test_get_by_id_not_found(self):
         self.assertRaises(
             exception.FlavorPermissionRuleNotFound,

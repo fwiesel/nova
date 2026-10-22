@@ -625,6 +625,64 @@ class TestFlavorFiltering(test.TestCase):
 
 
 @ddt.ddt
+class TestFlavorPermissionDomainIsolation(test.TestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.context = nova_context.RequestContext(
+            'fake-user', 'fake-project', project_domain_id='fake-domain')
+        flavor_values = dict(fake_flavor)
+        flavor_values.pop('id')
+        self.flavor = objects.Flavor(context=self.context, **flavor_values)
+        self.flavor.create()
+
+    def _create_rule(self, domain_id, effect, flavor_id=None):
+        rule = objects.FlavorPermissionRule(
+            context=self.context, domain_id=domain_id,
+            project_id=self.context.project_id,
+            flavor_id=flavor_id, effect=effect)
+        rule.create()
+
+    def _create_foreign_rule(self, scenario):
+        # Keep the project ID identical: only the rule's domain differs.
+        if scenario == 'specific_allow':
+            self._create_rule(
+                self.context.project_domain_id,
+                fields.FlavorPermissionRuleEffect.DENY)
+        self._create_rule(
+            'other-domain',
+            fields.FlavorPermissionRuleEffect.ALLOW
+            if scenario == 'specific_allow'
+            else fields.FlavorPermissionRuleEffect.DENY,
+            None if scenario == 'default_deny' else self.flavor.id)
+
+    @ddt.data('specific_deny', 'default_deny', 'specific_allow')
+    def test_foreign_domain_rule_does_not_change_visibility(self, scenario):
+        self._create_foreign_rule(scenario)
+
+        flavors = objects.FlavorList.get_all(self.context)
+
+        self.assertEqual(scenario != 'specific_allow',
+                         self.flavor.id in {flavor.id for flavor in flavors})
+
+    @ddt.data('specific_deny', 'default_deny', 'specific_allow')
+    def test_foreign_domain_rule_does_not_change_permissions(self, scenario):
+        self._create_foreign_rule(scenario)
+
+        permissions = self.flavor.get_permission(
+            include_domain=True, include_project=True)
+
+        self.assertEqual({
+            fields.FlavorPermissionRuleScope.DOMAIN:
+                fields.FlavorPermissionRuleEffect.ALLOW,
+            fields.FlavorPermissionRuleScope.PROJECT:
+                fields.FlavorPermissionRuleEffect.DENY
+                if scenario == 'specific_allow'
+                else fields.FlavorPermissionRuleEffect.ALLOW,
+        }, permissions)
+
+
+@ddt.ddt
 class TestFlavorQueryPermissionFilter(test.NoDBTestCase):
 
     @ddt.data(
