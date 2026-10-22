@@ -331,6 +331,43 @@ class FlavorPermissionRulesControllerTest(test.NoDBTestCase):
         self.assertEqual(SCOPE_PROJECT, rule_dict['scope'])
         self.assertEqual(DENY, rule_dict['effect'])
 
+    @ddt.data(DOMAIN_ID, 'other-domain')
+    @mock.patch('nova.utils.get_ksa_adapter')
+    @mock.patch('nova.objects.FlavorPermissionRule.create',
+                new=_mock_create_rule_obj)
+    def test_create_project_rule_validates_domain(self, actual_domain,
+                                                 mock_adapter):
+        req = self._req()
+        ctx = req.environ['nova.context']
+
+        def domain_admin_can(action, target=None, fatal=True):
+            allowed = (action == ROOT % 'create:project' and
+                       target['project_domain_id'] == ctx.project_domain_id)
+            if not allowed and fatal:
+                raise exception.PolicyNotAuthorized(action=action)
+            return allowed
+
+        ctx.can.side_effect = domain_admin_can
+        response = mock_adapter.return_value.get.return_value
+        response.status_code = 200
+        response.json.return_value = {'project': {
+            'id': 'target-project', 'domain_id': actual_domain,
+            'is_domain': False,
+        }}
+        body = {'flavor_permission_rule': {
+            'domain_id': DOMAIN_ID, 'project_id': 'target-project',
+            'effect': DENY,
+        }}
+
+        if actual_domain != DOMAIN_ID:
+            self.assertRaises(webob.exc.HTTPBadRequest,
+                              self.controller.create, req, body=body)
+        else:
+            result = self.controller.create(req, body=body)
+            self.assertEqual(
+                'target-project',
+                result['flavor_permission_rule']['project_id'])
+
     @mock.patch('nova.api.openstack.common.get_flavor')
     @mock.patch('nova.objects.FlavorPermissionRule.create',
         new=_mock_create_rule_obj)
